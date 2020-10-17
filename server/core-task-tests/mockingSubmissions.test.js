@@ -117,7 +117,7 @@ describe('Submission process', () => {
         })
         .reply(200)
     
-        const myUser = User.findOne();
+        const myUser = await User.findOne();
         await request(app).post(`/api/v1/challenges/${solutionRepos[0].challengeId}/apply`).set('authorization',`bearer ${accessToken}`)
         .send({repository:solutionRepos[0].repo , ...review, user:myUser});
         await request(app).post(`/api/v1/challenges/${failRepos[0].challengeId}/apply`).set('authorization',`bearer ${accessToken}`)
