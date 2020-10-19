@@ -3,9 +3,13 @@
  */
 const request = require('supertest');
 const app = require('../app');
-const {Submission, Challenge, User} = require('../models');
+const {Submission, Challenge, User, Review} = require('../models');
 const {challengeArr, solutionRepos, failRepos} = require('./mockData');
+const review = { commentContent : 'why you do this', commentTitle: 'annoying', rating: 3, userId: 1 }
 const nock = require('nock');
+const ref = process.env.MY_BRANCH || process.env.DEFAULT_BRANCH || 'master';
+process.env.IP_ADDRESS = 'testingAddress';
+console.log(ref);
 let accessToken;
 const userToAdd = {
   firstName: "Matan",
@@ -27,6 +31,7 @@ describe('Submission process', () => {
         await Challenge.destroy({ truncate: true, force: true });
         await Submission.destroy({ truncate: true, force: true });
         await User.destroy({ truncate: true, force: true });
+        await Review.destroy({ truncate: true, force: true });
         await Challenge.bulkCreate(challengeArr);
         await User.create({...userToAdd});
         await Submission.create({
@@ -39,11 +44,11 @@ describe('Submission process', () => {
           state: 'FAIL',
           solutionRepository: failRepos[0].repo
         });
-        process.env.MY_URL = 'TheWebHookUrl';
         const password = '12345678';
         const userName = 'matanGreenvald';
         const {headers} = await request(app).post('/api/v1/auth/login').send({userName, password, rememberMe:false})
-        accessToken = headers['set-cookie'][0].split(';')[0].split('=')[1];
+        const index = headers['set-cookie'].findIndex(string => string.indexOf('accessToken') === 0);
+        accessToken = headers['set-cookie'][index].split(';')[0].split('=')[1];
         done();
       });
     test('Posting submisson and status change to PENDING + can Post Submissions that had FAIL status', async () => {
@@ -53,19 +58,20 @@ describe('Submission process', () => {
         let challengeType = challenges.find(challenge => challenge.id === solutionRepos[0].challengeId).type;
         let testRepo = challenges.find(challenge=> challenge.id === solutionRepos[0].challengeId).repositoryName;
         const successId = initialSubmissions.find(submission => submission.solutionRepository === solutionRepos[0].repo).id;
-        let webhookUrl = process.env.MY_URL.concat(`/api/v1/webhook/submission/${successId}`);
-        
+        let webhookUrl = process.env.IP_ADDRESS.concat(`/api/v1/webhook/submission/${successId}`);
+        console.log('AAAAAAAAAAAAAAAAAAAAAAAAA',ref)
         const githubPostmock1 = nock(`https://api.github.com`, {reqHeaders: {
           'Content-Type': 'application/json',
           Authorization: `token ${process.env.GITHUB_ACCESS_TOKEN}`
       }})
         .post(`/repos/${process.env.GITHUB_REPO}/actions/workflows/${challengeType}.yml/dispatches`,
         {
-            ref: 'master',
+            ref: ref,
             inputs: {              
               testRepo: testRepo,
               solutionRepo: solutionRepos[0].repo,
-              webhookUrl: webhookUrl
+              webhookUrl: webhookUrl,
+              bearerToken: accessToken
             }
         })
         .reply(200)
@@ -74,18 +80,19 @@ describe('Submission process', () => {
         challengeType = challenges.find(challenge => challenge.id === failRepos[0].challengeId).type;
         testRepo = challengeArr.find(challenge=> challenge.id === failRepos[0].challengeId).repositoryName;
         const failId = initialSubmissions.find(submission => submission.solutionRepository === failRepos[0].repo).id;
-        webhookUrl = process.env.MY_URL.concat(`/api/v1/webhook/submission/${failId}`);
+        webhookUrl = process.env.IP_ADDRESS.concat(`/api/v1/webhook/submission/${failId}`);
         const githubPostmock2 = nock(`https://api.github.com`, {reqHeaders: {
           'Content-Type': 'application/json',
           Authorization: `token ${process.env.GITHUB_ACCESS_TOKEN}`
       }})
         .post(`/repos/${process.env.GITHUB_REPO}/actions/workflows/${challengeType}.yml/dispatches`,
         {
-            ref: 'master',
+            ref: ref,
             inputs: {              
               testRepo: testRepo,
               solutionRepo: failRepos[0].repo,
-              webhookUrl: webhookUrl
+              webhookUrl: webhookUrl,
+              bearerToken: accessToken
             }
         })
         .reply(200)
@@ -93,29 +100,30 @@ describe('Submission process', () => {
 
         challengeType = challenges.find(challenge => challenge.id === solutionRepos[1].challengeId).type;
         testRepo = challengeArr.find(challenge=> challenge.id === solutionRepos[1].challengeId).repositoryName;
-        webhookUrl = process.env.MY_URL.concat(`/api/v1/webhook/submission/${3}`);
+        webhookUrl = process.env.IP_ADDRESS.concat(`/api/v1/webhook/submission/${3}`);
         const githubPostmock3 = nock(`https://api.github.com`, {reqHeaders: {
           'Content-Type': 'application/json',
           Authorization: `token ${process.env.GITHUB_ACCESS_TOKEN}`
       }})
         .post(`/repos/${process.env.GITHUB_REPO}/actions/workflows/${challengeType}.yml/dispatches`,
         {
-            ref: 'master',
+            ref: ref,
             inputs: {              
               testRepo: testRepo,
               solutionRepo: solutionRepos[1].repo,
-              webhookUrl: webhookUrl
+              webhookUrl: webhookUrl,
+              bearerToken: accessToken
             }
         })
         .reply(200)
     
 
         await request(app).post(`/api/v1/challenges/${solutionRepos[0].challengeId}/apply`).set('authorization',`bearer ${accessToken}`)
-        .send({solutionRepository:solutionRepos[0].repo});
+        .send({repository:solutionRepos[0].repo , ...review});
         await request(app).post(`/api/v1/challenges/${failRepos[0].challengeId}/apply`).set('authorization',`bearer ${accessToken}`)
-        .send({solutionRepository:failRepos[0].repo});
+        .send({repository:failRepos[0].repo, ...review});
         await request(app).post(`/api/v1/challenges/${solutionRepos[1].challengeId}/apply`).set('authorization',`bearer ${accessToken}`)
-        .send({solutionRepository:solutionRepos[1].repo});
+        .send({repository:solutionRepos[1].repo, ...review});
         expect(githubPostmock1.isDone()).toEqual(true);
         expect(githubPostmock2.isDone()).toEqual(true);
         expect(githubPostmock3.isDone()).toEqual(true);
